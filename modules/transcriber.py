@@ -121,9 +121,12 @@ def _load_to_wav_buffer(path: Path, target_sr: int, mono: bool) -> io.BytesIO:
 # Transcriptor
 # -----------------------------
 class FasterWhisperTranscriber:
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], run_manager=None):
         init_start_time = time.time()
         logger.info("Initializing FasterWhisperTranscriber...")
+
+        # Store run manager for tracking
+        self.run_manager = run_manager
 
         # Create config
         self.cfg = TranscribeConfig.from_dict(config)
@@ -189,7 +192,7 @@ class FasterWhisperTranscriber:
         total_init_time = time.time() - init_start_time
         logger.info(f"FasterWhisperTranscriber initialization completed in {total_init_time:.2f}s")
 
-    def transcribe(self) -> str:
+    def transcribe(self) -> tuple[str, Dict[str, Any]]:
         """
         Devuelve la transcripción como un único string.
         """
@@ -203,6 +206,11 @@ class FasterWhisperTranscriber:
             wav_buf = _load_to_wav_buffer(self.cfg.audio_path, self.cfg.target_sr, self.cfg.mono)
             audio_load_time = time.time() - audio_load_start
             logger.info(f"Audio preprocessing completed in {audio_load_time:.2f}s")
+
+            # Track timing in run manager
+            if self.run_manager:
+                self.run_manager.log_timing("audio_processing", audio_load_time)
+
         except Exception as e:
             logger.error(f"Failed to load audio: {str(e)}")
             raise
@@ -226,6 +234,10 @@ class FasterWhisperTranscriber:
             segments, info = self._model.transcribe(wav_buf, **transcription_params)
             whisper_time = time.time() - whisper_start_time
             logger.info(f"Whisper transcription completed in {whisper_time:.2f}s")
+
+            # Track timing in run manager
+            if self.run_manager:
+                self.run_manager.log_timing("whisper_transcription", whisper_time)
 
             # Log transcription info
             logger.debug(f"Transcription info - language: {info.language}, language_probability: {info.language_probability:.4f}")
@@ -273,7 +285,20 @@ class FasterWhisperTranscriber:
         logger.info(f"Performance metrics - total_time: {total_time:.2f}s, characters: {char_count}, words: {word_count}")
         logger.info(f"Transcription preview: '{out[:100]}{'...' if len(out) > 100 else ''}'")
 
-        return out
+        # Prepare additional information for run tracking
+        transcription_info = {
+            "audio_duration": total_segment_duration,
+            "segment_count": segment_count,
+            "language_detected": getattr(info, 'language', 'unknown'),
+            "language_probability": getattr(info, 'language_probability', 0.0),
+            "total_time": total_time,
+            "whisper_time": self.run_manager.timings.get("whisper_transcription", 0.0) if self.run_manager else whisper_time,
+            "audio_load_time": self.run_manager.timings.get("audio_processing", 0.0) if self.run_manager else audio_load_time,
+            "character_count": char_count,
+            "word_count": word_count
+        }
+
+        return out, transcription_info
 
 
 # -----------------------------
@@ -302,13 +327,18 @@ if __name__ == "__main__":
         tx = FasterWhisperTranscriber(cfg)
 
         logger.info("Starting transcription...")
-        text = tx.transcribe()
+        text, info = tx.transcribe()
 
         logger.info("Transcription demo completed successfully!")
         print("\n" + "="*50)
         print("TRANSCRIPTION RESULT:")
         print("="*50)
         print(text)
+        print("="*50)
+        print("TRANSCRIPTION INFO:")
+        print("="*50)
+        for key, value in info.items():
+            print(f"{key}: {value}")
         print("="*50)
 
     except Exception as e:
