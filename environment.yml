@@ -1,0 +1,14 @@
+name: psych-audio
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - ffmpeg
+  - pip
+  - pip:
+      - numpy
+      - pandas
+      - python-dotenv
+      - pydub
+      - faster-whisper
+      - "huggingface_hub[cli]"
