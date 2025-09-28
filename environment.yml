@@ -13,3 +13,6 @@ dependencies:
       - faster-whisper
       - "huggingface_hub[cli]"
       - openai
+      - git+https://github.com/openai/whisper.git
+      - git+https://github.com/pyannote/pyannote-audio.git
+      - openai-whisper
