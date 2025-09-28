@@ -9,7 +9,7 @@ to organized run directories for easy tracking and analysis.
 import sys
 import logging
 from pathlib import Path
-from modules.transcriber import FasterWhisperTranscriber
+from modules.transcript_with_speakers_names import WhisperSpeakerTranscriber
 from modules.run_manager import RunManager
 
 # Configure logging for the main app
@@ -25,91 +25,80 @@ def main():
 
     # Configuration
     config = {
-        "audio_path": "chunks/001_audio/chunk_003.wav",  # Change this to your audio file
-        "language": "es",
-        "model": "Systran/faster-whisper-large-v3",   # or "large-v2" for lighter model
-        "device": "auto",  # "auto", "cpu", or "cuda"
-        "target_sr": 16000,
-        "mono": True,
-        "vad_filter": True,
+        "input_path": "data/001_audio.mp4",  # Change this to your audio file
+        "num_speakers": 2,
+        "model_size": "large",
+        "language": "any",
+        "device": "cpu",  # "cpu", "cuda", or "mps"
+        "output_dir": "runs",
+        "write_script_format": True,
+        "write_segments_json": True,
+        "use_run_manager": True
     }
 
     logger.info("Starting transcription workflow...")
-    logger.info(f"Audio file: {config['audio_path']}")
-    logger.info(f"Model: {config['model']}")
+    logger.info(f"Audio file: {config['input_path']}")
+    logger.info(f"Model: {config['model_size']}")
     logger.info(f"Device: {config['device']}")
+    logger.info(f"Speakers: {config['num_speakers']}")
 
     # Initialize run manager
     run_manager = RunManager()
 
     try:
         # Validate audio file exists
-        audio_path = Path(config["audio_path"])
+        audio_path = Path(config["input_path"])
         if not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
         # Initialize transcriber with run tracking
         logger.info("Initializing transcriber...")
-        transcriber = FasterWhisperTranscriber(config, run_manager=run_manager)
+        transcriber = WhisperSpeakerTranscriber(run_manager=run_manager)
 
         # Perform transcription
-        logger.info("Starting transcription...")
-        transcription, info = transcriber.transcribe()
+        logger.info("Starting transcription with speaker diarization...")
+        result = transcriber.process(config)
 
-        # Save results to run directory
-        logger.info("Saving transcription results...")
-        run_manager.save_transcription(transcription)
-
-        # Copy logs to run directory
+        # Copy logs to run directory (if any log files exist)
         logger.info("Copying log files...")
-        run_manager.copy_logs("transcriber.log")
-
-        # Save metadata
-        logger.info("Saving run metadata...")
-        metadata = run_manager.save_metadata(
-            audio_file=config["audio_path"],
-            transcription=transcription,
-            config=config,
-            audio_duration=info["audio_duration"],
-            segment_count=info["segment_count"],
-            success=True
-        )
+        if Path("transcriber.log").exists():
+            run_manager.copy_logs("transcriber.log")
 
         # Display results
         print("\n" + "="*60)
         print("TRANSCRIPTION COMPLETED SUCCESSFULLY!")
         print("="*60)
-        print(f"Run ID: {run_manager.run_id}")
-        print(f"Run Directory: {run_manager.run_dir}")
-        print(f"Total Time: {metadata.total_time_seconds:.2f}s")
-        print(f"Audio Duration: {info['audio_duration']:.2f}s")
-        print(f"Segments: {info['segment_count']}")
-        print(f"Characters: {info['character_count']}")
-        print(f"Words: {info['word_count']}")
+        print(f"Run ID: {result['run_id']}")
+        print(f"Run Directory: {result['run_dir']}")
+        print(f"Audio Duration: {result['audio_duration']:.2f}s")
+        print(f"Segments: {result['segment_count']}")
+        print(f"Characters: {result['character_count']}")
+        print(f"Words: {result['word_count']}")
         print("="*60)
-        print("TRANSCRIPTION:")
+        print("SCRIPT FORMAT TRANSCRIPTION:")
         print("="*60)
-        print(transcription)
+        if "text" in result:
+            print(result["text"])
+        else:
+            # Read the script file directly
+            script_path = result.get("script_path")
+            if script_path and Path(script_path).exists():
+                with open(script_path, "r", encoding="utf-8") as f:
+                    print(f.read())
         print("="*60)
 
-        logger.info(f"All results saved to: {run_manager.run_dir}")
+        logger.info(f"All results saved to: {result['run_dir']}")
         return True
 
     except Exception as e:
         logger.error(f"Transcription failed: {str(e)}")
 
-        # Save error metadata
+        # Copy logs to run directory for debugging
         try:
-            run_manager.save_metadata(
-                audio_file=config.get("audio_path", "unknown"),
-                transcription="",
-                config=config,
-                success=False,
-                error_message=str(e)
-            )
-            run_manager.copy_logs("transcriber.log")
+            if Path("transcriber.log").exists():
+                run_manager.copy_logs("transcriber.log")
         except Exception as save_error:
-            logger.error(f"Failed to save error metadata: {save_error}")
+            logger.error(f"Failed to copy logs: {save_error}")
 
         print(f"\nERROR: {e}")
         print(f"Error details saved to: {run_manager.run_dir}")
